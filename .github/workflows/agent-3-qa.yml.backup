@@ -1,0 +1,368 @@
+name: Agent 3 - QA Auditor
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  qa-validation:
+    if: contains(github.event.pull_request.labels.*.name, 'agent-qa-ready')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0  # Full history for better analysis
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install Dependencies
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          fi
+          
+      - name: Run Unit Tests
+        id: unit-tests
+        run: |
+          if grep -q '"test"' package.json; then
+            npm test 2>&1 | tee test-output.log
+            echo "status=passed" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No tests configured"
+            echo "status=skipped" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+        
+      - name: Generate Coverage Report
+        id: coverage
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            COVERAGE=$(node -e "
+              const cov = require('./coverage/coverage-summary.json');
+              const total = cov.total;
+              console.log(Math.round(total.lines.pct));
+            ")
+            echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+            echo "✅ Coverage: $COVERAGE%"
+          else
+            echo "coverage=0" >> $GITHUB_OUTPUT
+            echo "⚠️ No coverage report found"
+          fi
+        continue-on-error: true
+        
+      - name: Security Audit
+        id: security
+        run: |
+          npm audit --json > security-audit.json 2>&1 || true
+          
+          CRITICAL=$(node -e "
+            try {
+              const audit = require('./security-audit.json');
+              console.log(audit.metadata?.vulnerabilities?.critical || 0);
+            } catch(e) {
+              console.log(0);
+            }
+          ")
+          
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Found $CRITICAL critical vulnerabilities"
+          else
+            echo "✅ No critical vulnerabilities"
+          fi
+        continue-on-error: true
+        
+      - name: Code Quality Check
+        id: quality
+        run: |
+          if grep -q '"lint"' package.json; then
+            npm run lint 2>&1 | tee lint-output.log || true
+            
+            if [ $? -eq 0 ]; then
+              echo "status=passed" >> $GITHUB_OUTPUT
+            else
+              echo "status=failed" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "status=skipped" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+        
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+        
+      - name: Comprehensive QA Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p qa-reports
+          
+          # Extract issue number from PR
+          ISSUE_NUM=$(echo "${{ github.event.pull_request.body }}" | grep -oP 'Closes #\K\d+' || echo "unknown")
+          
+          # Create QA prompt
+          cat > /tmp/qa-prompt.txt << 'QA_PROMPT'
+          You are Agent 3: The QA Auditor - Objective quality validator with zero tolerance for poor quality.
+          
+          MISSION: Comprehensive validation of the implemented feature.
+          
+          ORIGINAL REQUIREMENTS:
+          (Extract from issue #${ISSUE_NUM} if available)
+          
+          ARCHITECTURE PLAN:
+          $(cat plans/${ISSUE_NUM}/architecture.md 2>/dev/null || echo "Architecture plan not found")
+          
+          CHANGED FILES:
+          $(git diff --name-status origin/main...HEAD)
+          
+          FILE CONTENTS:
+          $(git diff origin/main...HEAD)
+          
+          TEST RESULTS:
+          $(cat test-output.log 2>/dev/null || echo "No test output")
+          
+          COVERAGE REPORT:
+          $(cat coverage/coverage-summary.json 2>/dev/null || echo "No coverage report")
+          Coverage: ${{ steps.coverage.outputs.coverage }}%
+          
+          SECURITY AUDIT:
+          $(cat security-audit.json 2>/dev/null || echo "No security audit")
+          Critical vulnerabilities: ${{ steps.security.outputs.critical }}
+          
+          LINTING:
+          $(cat lint-output.log 2>/dev/null || echo "No lint output")
+          
+          YOUR VALIDATION CHECKLIST:
+          
+          1. ARCHITECTURE COMPLIANCE
+             - Does implementation match the plan?
+             - Any unjustified deviations?
+             - All components implemented?
+          
+          2. CODE QUALITY
+             - Readability and maintainability
+             - Best practices followed
+             - No code smells
+             - Proper error handling
+             - Clear documentation
+          
+          3. TESTING
+             - All tests passing?
+             - Coverage meets >90% threshold?
+             - Edge cases tested?
+             - Test quality (not just quantity)
+          
+          4. SECURITY
+             - No critical vulnerabilities?
+             - Input validation present?
+             - No sensitive data exposed?
+             - Security best practices followed?
+          
+          5. PERFORMANCE
+             - No obvious bottlenecks?
+             - Efficient algorithms?
+             - Resource usage reasonable?
+          
+          6. DOCUMENTATION
+             - Code comments clear?
+             - API documented?
+             - README updated?
+          
+          VALIDATION STANDARDS:
+          - Jobs-level quality obsession
+          - Amodei-level safety consciousness
+          - Zero tolerance for critical issues
+          
+          DECISION CRITERIA:
+          
+          ✅ APPROVE if:
+          - All tests pass
+          - Coverage ≥90%
+          - No critical vulnerabilities
+          - Code quality high
+          - Documentation complete
+          
+          ⚠️ APPROVE WITH COMMENTS if:
+          - Core functionality works
+          - Minor issues present (list them)
+          - Safe to merge with caveats
+          
+          ❌ REJECT if:
+          - Tests failing
+          - Coverage <90%
+          - Critical security issues
+          - Major quality problems
+          - Breaking changes undocumented
+          
+          Generate comprehensive QA report in this exact format:
+          
+          # QA Report: [Feature Name]
+          
+          ## Executive Summary
+          **Decision: [APPROVE / APPROVE WITH COMMENTS / REJECT]**
+          
+          ## Metrics Dashboard
+          - Test Status: [PASS/FAIL]
+          - Coverage: X%
+          - Security: X critical vulnerabilities
+          - Code Quality: [Excellent/Good/Fair/Poor]
+          
+          ## Detailed Analysis
+          
+          ### Architecture Compliance
+          [Your analysis]
+          
+          ### Code Quality Assessment
+          [Your analysis]
+          
+          ### Testing Evaluation
+          [Your analysis]
+          
+          ### Security Review
+          [Your analysis]
+          
+          ### Performance Considerations
+          [Your analysis]
+          
+          ### Documentation Review
+          [Your analysis]
+          
+          ## Issues Found
+          [List with severity: Critical/High/Medium/Low]
+          
+          ## Recommendations
+          [Specific actionable items]
+          
+          ## Final Decision
+          [Clear recommendation with justification]
+          
+          ---
+          
+          Be objective. Be thorough. Quality is non-negotiable.
+          
+          Save this report to: qa-reports/final-report.md
+          QA_PROMPT
+          
+          # Replace variables
+          sed -i "s/\${ISSUE_NUM}/$ISSUE_NUM/g" /tmp/qa-prompt.txt
+          
+          # Execute QA review
+          claude-code "$(cat /tmp/qa-prompt.txt)"
+          
+      - name: Validate QA Report
+        id: qa-decision
+        run: |
+          if [ ! -f qa-reports/final-report.md ]; then
+            echo "❌ QA report not generated"
+            echo "decision=REJECT" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check for decision in report
+          if grep -q "Decision: APPROVE" qa-reports/final-report.md; then
+            if grep -q "APPROVE WITH COMMENTS" qa-reports/final-report.md; then
+              echo "decision=APPROVE_WITH_COMMENTS" >> $GITHUB_OUTPUT
+              echo "✅ Approved with comments"
+            else
+              echo "decision=APPROVE" >> $GITHUB_OUTPUT
+              echo "✅ Approved"
+            fi
+          else
+            echo "decision=REJECT" >> $GITHUB_OUTPUT
+            echo "❌ Rejected"
+          fi
+          
+      - name: Post QA Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let report = '';
+            try {
+              report = fs.readFileSync('qa-reports/final-report.md', 'utf8');
+            } catch (e) {
+              report = '## ❌ QA Report Generation Failed\n\nUnable to generate comprehensive QA report.';
+            }
+            
+            const decision = '${{ steps.qa-decision.outputs.decision }}';
+            const coverage = '${{ steps.coverage.outputs.coverage }}';
+            const critical = '${{ steps.security.outputs.critical }}';
+            
+            const emoji = decision === 'APPROVE' ? '✅' : 
+                         decision === 'APPROVE_WITH_COMMENTS' ? '⚠️' : '❌';
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ${emoji} Agent 3: QA Report
+              
+${report}
+
+---
+
+### Quality Metrics Summary
+- **Coverage:** ${coverage}%
+- **Critical Vulnerabilities:** ${critical}
+- **Decision:** ${decision.replace(/_/g, ' ')}
+
+**Validated by Agent 3** | [View Full Report](../qa-reports/final-report.md)`
+            });
+            
+      - name: Approve or Request Changes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const decision = '${{ steps.qa-decision.outputs.decision }}';
+            
+            if (decision === 'APPROVE' || decision === 'APPROVE_WITH_COMMENTS') {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                event: 'APPROVE',
+                body: '✅ **Quality gates passed.** Ready for human strategic review and merge.'
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['agent-approved']
+              });
+            } else {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                event: 'REQUEST_CHANGES',
+                body: '❌ **Quality gates failed.** See QA report for details.'
+              });
+            }
+            
+      - name: Upload QA Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-reports
+          path: |
+            qa-reports/
+            coverage/
+            test-output.log
+            security-audit.json
+            lint-output.log
+          retention-days: 30
