@@ -24,20 +24,13 @@ jobs:
         with:
           node-version: '20'
           
-      - name: Install Dependencies
-        run: |
-          if [ -f package.json ]; then
-            npm install
-          fi
-        
-      - name: Create Simple Implementation
+      - name: Create Implementation Files
         run: |
           ISSUE_NUM=${{ github.event.client_payload.issue_number }}
-          
           mkdir -p src tests
           
-          echo "Creating src/index.js..."
-          cat > src/index.js << 'SRCEOF'
+          # Create src/index.js
+          cat > src/index.js << 'ENDFILE'
 const express = require('express');
 const app = express();
 
@@ -54,15 +47,15 @@ const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log('Server running on port ' + PORT);
   });
 }
 
 module.exports = app;
-SRCEOF
+ENDFILE
 
-          echo "Creating tests/api.test.js..."
-          cat > tests/api.test.js << 'TESTEOF'
+          # Create tests/api.test.js
+          cat > tests/api.test.js << 'ENDFILE'
 const request = require('supertest');
 const app = require('../src/index');
 
@@ -83,14 +76,13 @@ describe('GET /hello', () => {
     expect(response.body).toHaveProperty('timestamp');
   });
 });
-TESTEOF
+ENDFILE
 
-          echo "Updating package.json..."
-          cat > package.json << 'PKGEOF'
+          # Create package.json
+          cat > package.json << 'ENDFILE'
 {
   "name": "hello-world-api",
   "version": "1.0.0",
-  "description": "Simple Hello World API",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -106,16 +98,14 @@ TESTEOF
   "jest": {
     "testEnvironment": "node",
     "coverageDirectory": "coverage",
-    "collectCoverageFrom": [
-      "src/**/*.js"
-    ]
+    "collectCoverageFrom": ["src/**/*.js"]
   }
 }
-PKGEOF
+ENDFILE
 
-          echo "Implementation complete!"
+          echo "Files created successfully"
           
-      - name: Install Project Dependencies
+      - name: Install Dependencies
         run: npm install
           
       - name: Run Tests
@@ -129,7 +119,7 @@ PKGEOF
           git config user.email "engineer@agents.local"
           git checkout -b feature/$ISSUE_NUM
           git add .
-          git commit -m "Implement feature for issue #$ISSUE_NUM" || echo "No changes"
+          git commit -m "Implement feature for issue #$ISSUE_NUM"
           git push origin feature/$ISSUE_NUM
           
       - name: Create Pull Request
@@ -137,14 +127,7 @@ PKGEOF
           GH_TOKEN: ${{ github.token }}
         run: |
           ISSUE_NUM=${{ github.event.client_payload.issue_number }}
-          gh pr create \
-            --base main \
-            --head feature/$ISSUE_NUM \
-            --title "Feature: Implementation for #$ISSUE_NUM" \
-            --body "Closes #$ISSUE_NUM
-
-Implementation complete with tests." \
-            --label "agent-qa-ready"
+          gh pr create --base main --head feature/$ISSUE_NUM --title "Feature: Implementation for #$ISSUE_NUM" --body "Closes #$ISSUE_NUM" --label "agent-qa-ready"
           
       - name: Comment on Issue
         uses: actions/github-script@v7
@@ -155,5 +138,5 @@ Implementation complete with tests." \
               issue_number: issueNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## ✨ Agent 2: Implementation Complete\n\nPull request created. Agent 3 will now validate quality.'
+              body: '## ✨ Agent 2: Implementation Complete\n\nPull request created. Agent 3 will validate.'
             });
