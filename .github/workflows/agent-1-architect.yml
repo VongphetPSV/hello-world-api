@@ -1,0 +1,173 @@
+name: Agent 1 - Architect
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  plan:
+    if: github.event.label.name == 'agent-develop'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+        
+      - name: Create Architecture Plan
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ISSUE_NUM=${{ github.event.issue.number }}
+          mkdir -p plans/$ISSUE_NUM
+          
+          # Save requirements
+          echo "${{ github.event.issue.body }}" > /tmp/requirements.txt
+          
+          # Create planning prompt
+          cat > /tmp/architect-prompt.txt << 'ARCHITECT_PROMPT'
+          You are Agent 1: The Architect - Expert in API design and Node.js architecture.
+          
+          MISSION: Create comprehensive architecture plan for the following requirement.
+          
+          REQUIREMENTS:
+          $(cat /tmp/requirements.txt)
+          
+          PROJECT CONTEXT:
+          - Stack: Node.js 20 + Express.js
+          - Testing: Jest + Supertest
+          - Target: Simple, production-ready API
+          - Deployment: Platform-agnostic (Docker-ready)
+          
+          DELIVERABLES:
+          
+          Create exactly 3 markdown files in plans/${ISSUE_NUM}/:
+          
+          1. architecture.md - Must include:
+             - API endpoint specifications (method, path, response format)
+             - Project structure (directories and key files)
+             - Technology stack justification
+             - Error handling strategy
+             - Security considerations
+             - Performance targets
+          
+          2. implementation.md - Must include:
+             - Step-by-step implementation guide
+             - Exact file paths to create
+             - Code structure overview
+             - Dependencies to install
+             - Configuration needed
+             - Integration points
+          
+          3. test-plan.md - Must include:
+             - Unit test cases (specific scenarios)
+             - Integration test cases
+             - Edge cases to cover
+             - Expected test coverage (>90%)
+             - Performance benchmarks
+          
+          DESIGN PRINCIPLES:
+          - RESTful best practices
+          - Simple and maintainable
+          - Well-documented
+          - Production-ready from day 1
+          - Security by default
+          
+          CONSTRAINTS:
+          - Must be implementable by Agent 2 without clarification
+          - All edge cases identified
+          - Clear success criteria
+          - Ready for automated QA validation
+          
+          Think deeply about the requirements. Apply first principles.
+          Plan for scale, but start simple.
+          
+          Create the three files now.
+          ARCHITECT_PROMPT
+          
+          # Execute planning
+          claude-code "$(cat /tmp/architect-prompt.txt)"
+          
+      - name: Validate Plans Created
+        run: |
+          ISSUE_NUM=${{ github.event.issue.number }}
+          
+          if [ ! -f "plans/$ISSUE_NUM/architecture.md" ]; then
+            echo "❌ architecture.md not created"
+            exit 1
+          fi
+          
+          if [ ! -f "plans/$ISSUE_NUM/implementation.md" ]; then
+            echo "❌ implementation.md not created"
+            exit 1
+          fi
+          
+          if [ ! -f "plans/$ISSUE_NUM/test-plan.md" ]; then
+            echo "❌ test-plan.md not created"
+            exit 1
+          fi
+          
+          echo "✅ All planning documents created"
+          
+      - name: Commit Plans
+        run: |
+          ISSUE_NUM=${{ github.event.issue.number }}
+          
+          git config user.name "Agent-1-Architect"
+          git config user.email "architect@agents.local"
+          
+          git checkout -b planning/$ISSUE_NUM
+          git add plans/$ISSUE_NUM/
+          git commit -m "🏗️ Architecture plan for #$ISSUE_NUM
+          
+          - System architecture designed
+          - Implementation roadmap created
+          - Test strategy defined
+          
+          Ready for Agent 2 implementation."
+          
+          git push origin planning/$ISSUE_NUM
+          
+      - name: Comment on Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            
+            github.rest.issues.createComment({
+              issue_number: issueNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🏗️ Agent 1: Architecture Complete
+              
+              I've analyzed the requirements and created a comprehensive plan.
+              
+              **Deliverables:**
+              - ✅ \`architecture.md\` - System design and API specifications
+              - ✅ \`implementation.md\` - Step-by-step implementation guide
+              - ✅ \`test-plan.md\` - Comprehensive testing strategy
+              
+              **Branch:** \`planning/${issueNumber}\`
+              
+              **Next Step:** Agent 2 will now implement the feature.
+              
+              ⏱️ Estimated implementation time: 45-60 minutes`
+            });
+          
+      - name: Trigger Agent 2
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          event-type: agent-2-execute
+          client-payload: '{"issue_number": "${{ github.event.issue.number }}"}'
