@@ -13,6 +13,7 @@ jobs:
   plan:
     if: github.event.label.name == 'agent-develop'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
       - name: Checkout repository
@@ -23,67 +24,102 @@ jobs:
         with:
           node-version: '20'
       
-      - name: Check ANTHROPIC_API_KEY exists
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+        
+      - name: Create Architecture Plan
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
-            echo "ERROR: ANTHROPIC_API_KEY secret is not set"
-            exit 1
-          fi
-          echo "API key is configured"
-      
-      - name: Create Plans
-        run: |
-          ISSUE_NUM=${{ github.event.issue.number }}
-          mkdir -p plans/$ISSUE_NUM
+          ISSUE_NUM="${{ github.event.issue.number }}"
+          mkdir -p plans/${ISSUE_NUM}
           
-          echo "# Architecture Plan" > plans/$ISSUE_NUM/architecture.md
-          echo "" >> plans/$ISSUE_NUM/architecture.md
-          echo "## Requirements" >> plans/$ISSUE_NUM/architecture.md
-          echo "${{ github.event.issue.body }}" >> plans/$ISSUE_NUM/architecture.md
-          echo "" >> plans/$ISSUE_NUM/architecture.md
-          echo "## System Design" >> plans/$ISSUE_NUM/architecture.md
-          echo "- Framework: Express.js" >> plans/$ISSUE_NUM/architecture.md
-          echo "- API Endpoint: GET /hello" >> plans/$ISSUE_NUM/architecture.md
-          echo "- Response: JSON with message and timestamp" >> plans/$ISSUE_NUM/architecture.md
+          # Save requirements
+          echo "${{ github.event.issue.body }}" > plans/${ISSUE_NUM}/requirements.txt
           
-          echo "# Implementation Guide" > plans/$ISSUE_NUM/implementation.md
-          echo "" >> plans/$ISSUE_NUM/implementation.md
-          echo "## Step 1: Create src/index.js" >> plans/$ISSUE_NUM/implementation.md
-          echo "## Step 2: Add Express routes" >> plans/$ISSUE_NUM/implementation.md
-          echo "## Step 3: Add tests" >> plans/$ISSUE_NUM/implementation.md
+          # Generate architecture plan
+          cat << 'ENDFILE' > /tmp/agent1-prompt.txt
+          You are Agent 1: The Architect - Expert in system design.
           
-          echo "# Test Plan" > plans/$ISSUE_NUM/test-plan.md
-          echo "" >> plans/$ISSUE_NUM/test-plan.md
-          echo "## Unit Tests" >> plans/$ISSUE_NUM/test-plan.md
-          echo "- Test /hello endpoint" >> plans/$ISSUE_NUM/test-plan.md
-          echo "- Test response format" >> plans/$ISSUE_NUM/test-plan.md
+          MISSION: Create comprehensive architecture plan for Issue #${ISSUE_NUM}
           
-          echo "Plans created successfully"
-      
+          REQUIREMENTS:
+          $(cat plans/${ISSUE_NUM}/requirements.txt)
+          
+          PROJECT CONTEXT:
+          - Type: Hello World API
+          - Stack: Node.js, Express
+          - Goal: Complete 3-agent workflow test
+          
+          DELIVERABLES:
+          
+          Create these files in plans/${ISSUE_NUM}/:
+          
+          1. architecture.md
+             - System design overview
+             - Component architecture
+             - API endpoints specification
+             - Data flow diagram (text-based)
+             - Technology decisions
+             - Security considerations
+          
+          2. implementation.md
+             - Step-by-step implementation guide
+             - File structure to create
+             - Dependencies to install
+             - Code examples for key components
+             - Integration points
+          
+          3. test-plan.md
+             - Unit test specifications
+             - Integration test scenarios
+             - Edge cases to cover
+             - Success criteria
+          
+          CONSTRAINTS:
+          - Must be implementable by Agent 2 without clarification
+          - All edge cases identified
+          - Clear, actionable steps
+          - Production-ready design
+          
+          OUTPUT: Create all three markdown files with comprehensive details.
+          ENDFILE
+          
+          # Run Claude Code
+          claude-code "$(cat /tmp/agent1-prompt.txt)"
+          
       - name: Commit Plans
         run: |
-          ISSUE_NUM=${{ github.event.issue.number }}
-          git config user.name "Agent-1-Architect"
-          git config user.email "architect@agents.local"
-          git checkout -b planning/$ISSUE_NUM
-          git add plans/$ISSUE_NUM/
-          git commit -m "Architecture plan for issue #$ISSUE_NUM"
-          git push origin planning/$ISSUE_NUM
+          git config user.name "agent-1-architect[bot]"
+          git config user.email "agent-1@actions.github.com"
+          git checkout -b planning/${{ github.event.issue.number }}
+          git add plans/
+          git commit -m "🗺️ Architecture plan for #${{ github.event.issue.number }}"
+          git push origin planning/${{ github.event.issue.number }}
           
       - name: Comment on Issue
         uses: actions/github-script@v7
         with:
           script: |
-            const issueNumber = context.issue.number;
-            await github.rest.issues.createComment({
-              issue_number: issueNumber,
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## 🏗️ Agent 1: Architecture Complete\n\nPlans created in plans/' + issueNumber + '/\n\nNext: Agent 2 will implement.'
+              body: `✅ **Agent 1: Architecture Complete**
+              
+              Plans created in \`plans/${{ github.event.issue.number }}/\`
+              
+              Next: Agent 2 will implement.`
             });
           
       - name: Trigger Agent 2
         uses: peter-evans/repository-dispatch@v3
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           event-type: agent-2-execute
-          client-payload: '{"issue_number": "${{ github.event.issue.number }}"}'
+          client-payload: |
+            {
+              "issue_number": "${{ github.event.issue.number }}",
+              "issue_title": "${{ github.event.issue.title }}",
+              "planning_branch": "planning/${{ github.event.issue.number }}"
+            }
