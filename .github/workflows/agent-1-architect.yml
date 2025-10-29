@@ -24,69 +24,131 @@ jobs:
         with:
           node-version: '20'
       
+      # CRITICAL FIX: Properly configure npm global path
+      - name: Configure npm global path
+        run: |
+          mkdir -p ~/.npm-global
+          npm config set prefix ~/.npm-global
+          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
+      
+      # Install Claude Code and verify
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          echo "Verifying Claude Code installation..."
+          which claude-code || echo "Warning: claude-code not in PATH yet"
+          ls -la ~/.npm-global/bin/ || echo "Global bin directory not found"
         
+      - name: Verify Claude Code
+        run: |
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          which claude-code
+          claude-code --version
+          
       - name: Create Architecture Plan
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Ensure PATH includes npm global
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          
           ISSUE_NUM="${{ github.event.issue.number }}"
           mkdir -p plans/${ISSUE_NUM}
           
           # Save requirements
           echo "${{ github.event.issue.body }}" > plans/${ISSUE_NUM}/requirements.txt
           
-          # Generate architecture plan
-          cat << 'ENDFILE' > /tmp/agent1-prompt.txt
-          You are Agent 1: The Architect - Expert in system design.
-          
-          MISSION: Create comprehensive architecture plan for Issue #${ISSUE_NUM}
-          
-          REQUIREMENTS:
-          $(cat plans/${ISSUE_NUM}/requirements.txt)
-          
-          PROJECT CONTEXT:
-          - Type: Hello World API
-          - Stack: Node.js, Express
-          - Goal: Complete 3-agent workflow test
-          
-          DELIVERABLES:
-          
-          Create these files in plans/${ISSUE_NUM}/:
-          
-          1. architecture.md
-             - System design overview
-             - Component architecture
-             - API endpoints specification
-             - Data flow diagram (text-based)
-             - Technology decisions
-             - Security considerations
-          
-          2. implementation.md
-             - Step-by-step implementation guide
-             - File structure to create
-             - Dependencies to install
-             - Code examples for key components
-             - Integration points
-          
-          3. test-plan.md
-             - Unit test specifications
-             - Integration test scenarios
-             - Edge cases to cover
-             - Success criteria
-          
-          CONSTRAINTS:
-          - Must be implementable by Agent 2 without clarification
-          - All edge cases identified
-          - Clear, actionable steps
-          - Production-ready design
-          
-          OUTPUT: Create all three markdown files with comprehensive details.
-          ENDFILE
+          # Create comprehensive prompt
+          cat > /tmp/agent1-prompt.txt << 'EOF'
+You are Agent 1: The Architect - Expert in system design and planning.
+
+MISSION: Create comprehensive architecture plan for Issue #$ISSUE_NUM
+
+REQUIREMENTS:
+$(cat plans/$ISSUE_NUM/requirements.txt)
+
+PROJECT CONTEXT:
+- Repository: hello-world-api
+- Type: Testing 3-agent autonomous development system
+- Stack: Node.js, Express (or similar)
+- Goal: Validate complete autonomous workflow
+
+YOUR DELIVERABLES:
+
+Create these THREE files in the plans/$ISSUE_NUM/ directory:
+
+1. **architecture.md** - System Design
+   - High-level architecture overview
+   - Component diagram (text-based ASCII or Mermaid)
+   - API endpoints specification (if applicable)
+   - Data models and schemas
+   - Technology stack decisions with rationale
+   - Security considerations
+   - Performance targets
+   - Scalability approach
+
+2. **implementation.md** - Implementation Guide
+   - Step-by-step implementation plan
+   - Exact file structure to create
+   - Dependencies to install (with versions)
+   - Code examples for key components
+   - Integration points
+   - Environment setup
+   - Configuration needed
+
+3. **test-plan.md** - Testing Strategy
+   - Unit test specifications
+   - Integration test scenarios
+   - Edge cases to cover
+   - Performance benchmarks
+   - Security test cases
+   - Success criteria
+   - Test coverage targets (>90%)
+
+DESIGN PRINCIPLES:
+- First principles thinking (Elon Musk approach)
+- Keep it simple but complete (Steve Jobs)
+- Think systematically (Bill Gates)
+- Security by design (Dario Amodei)
+- Scalable from day one (Jensen Huang)
+
+QUALITY STANDARDS:
+- Agent 2 must be able to implement without asking questions
+- All edge cases identified upfront
+- Clear, actionable steps
+- Production-ready design
+- Well-documented decisions
+
+OUTPUT: Create all three markdown files with comprehensive, implementable plans.
+EOF
+
+          # Replace $ISSUE_NUM in the prompt
+          sed -i "s/\$ISSUE_NUM/${ISSUE_NUM}/g" /tmp/agent1-prompt.txt
           
           # Run Claude Code
+          echo "Running Claude Code to generate architecture plans..."
           claude-code "$(cat /tmp/agent1-prompt.txt)"
+          
+          # Verify output files were created
+          echo "Verifying generated files..."
+          ls -la plans/${ISSUE_NUM}/
+          
+          if [ ! -f "plans/${ISSUE_NUM}/architecture.md" ]; then
+            echo "ERROR: architecture.md not created!"
+            exit 1
+          fi
+          
+          if [ ! -f "plans/${ISSUE_NUM}/implementation.md" ]; then
+            echo "ERROR: implementation.md not created!"
+            exit 1
+          fi
+          
+          if [ ! -f "plans/${ISSUE_NUM}/test-plan.md" ]; then
+            echo "ERROR: test-plan.md not created!"
+            exit 1
+          fi
+          
+          echo "✅ All architecture files created successfully!"
           
       - name: Commit Plans
         run: |
@@ -105,11 +167,18 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `✅ **Agent 1: Architecture Complete**
+              body: `## ✅ Agent 1: Architecture Complete
               
               Plans created in \`plans/${{ github.event.issue.number }}/\`
               
-              Next: Agent 2 will implement.`
+              📋 Files created:
+              - \`architecture.md\` - System design and architecture
+              - \`implementation.md\` - Step-by-step implementation guide
+              - \`test-plan.md\` - Comprehensive testing strategy
+              
+              **Branch:** \`planning/${{ github.event.issue.number }}\`
+              
+              **Next:** Agent 2 will implement the solution.`
             });
           
       - name: Trigger Agent 2
